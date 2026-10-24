@@ -170,14 +170,7 @@ details summary::-webkit-details-marker{display:none}
     </section>
 
     <section class="card">
-      <div class="cardhead"><span class="label">Copy dots as</span>
-        <div class="seg small" role="group" aria-label="Dot character">
-          <button id="g-bullet" aria-pressed="true">•</button>
-          <button id="g-period" aria-pressed="false">.</button>
-        </div>
-      </div>
-      <p class="note">Dashes copy as -, letters are separated by 1 space and words by 3. Pasted text isn't touched by autocorrect. With dots copied as •, periods from the Symbols row stay distinguishable from Morse dots.</p>
-      <div class="cardhead" style="margin:16px 0 0"><span class="label">Theme</span>
+      <div class="cardhead" style="margin:0"><span class="label">Theme</span>
         <div class="seg small words" role="group" aria-label="Theme">
           <button id="t-auto" aria-pressed="true">Auto</button>
           <button id="t-light" aria-pressed="false">Light</button>
@@ -229,7 +222,7 @@ const load = (k,d) => { try { const v = localStorage.getItem(k); return v == nul
 const save = (k,v) => { try { localStorage.setItem(k,v); } catch(e){} };
 
 let raw = load("mp.raw", "");
-let dotGlyph = load("mp.dot", "•");
+const dotGlyph = "•";
 let mode = "write";
 
 // A literal period typed from the symbol row is stored as LDOT so it never mixes with Morse dots.
@@ -276,7 +269,7 @@ function renderText(el, s, live){
   el.textContent = "";
   if (!items.length){
     const h = document.createElement("span"); h.className = "hint";
-    h.textContent = live ? "Tap Dot and Dash below. The letters appear here as you type." : "Nothing to translate yet.";
+    h.textContent = live ? "..." : "Nothing to translate yet.";
     el.appendChild(h); return;
   }
   for (const it of items){
@@ -402,9 +395,6 @@ $("clear").addEventListener("click", () => {
 });
 
 // dot glyph setting
-function setGlyph(g){ dotGlyph = g; save("mp.dot", g); $("g-bullet").setAttribute("aria-pressed", g === "•"); $("g-period").setAttribute("aria-pressed", g === "."); renderWrite(); }
-$("g-bullet").addEventListener("click", () => setGlyph("•"));
-$("g-period").addEventListener("click", () => setGlyph("."));
 
 // theme: Auto follows the phone, Light/Dark override it
 function syncThemeColor(){
@@ -467,7 +457,7 @@ $("m-read").addEventListener("click", () => setMode("read"));
 $("r-in").addEventListener("input", () => renderText($("r-text"), $("r-in").value, false));
 $("r-clear").addEventListener("click", () => { $("r-in").value = ""; renderText($("r-text"), "", false); $("r-in").focus(); });
 
-setGlyph(dotGlyph === "." ? "." : "•");
+renderWrite();
 renderText($("r-text"), $("r-in").value, false);
 })();
 </script>

@@ -1,5 +1,5 @@
 // Morse Pad offline cache. Bump VERSION whenever you change any file.
-const VERSION = "morse-pad-v1";
+const VERSION = "morse-pad-v2";
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png",
   "icon-maskable-512.png", "apple-touch-icon.png"];
 
