@@ -70,22 +70,26 @@ main{overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding-bottom:
 .tbtn.warn{border-color:var(--bad);color:var(--bad)}
 .tbtn:focus-visible,.seg button:focus-visible,.key:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
 
-.text{font-size:24px;line-height:1.35;font-weight:500;letter-spacing:.04em;word-break:break-word;min-height:1.35em}
+.text{font-size:15px;line-height:1.4;font-weight:500;letter-spacing:.04em;word-break:break-word;min-height:1.4em}
 .text .unk{color:var(--bad)}
 .text .pending{color:var(--signal);border-bottom:2px solid var(--signal)}
-.text .hint{color:var(--muted);font-size:16px;font-weight:400;letter-spacing:0}
+.text .hint{color:var(--muted);font-size:15px;font-weight:400;letter-spacing:0}
 
-.tape{font-family:var(--f-code);display:flex;flex-wrap:wrap;align-items:center;align-content:flex-start;row-gap:12px;min-height:28px;
+.tape{font-family:var(--f-code);display:flex;flex-wrap:wrap;align-items:center;align-content:flex-start;row-gap:7px;min-height:18px;
   max-height:min(140px, 20vh);padding:4px 0}
-#w-text{max-height:min(calc(1.35em * 4), 20vh)}
+#w-text{max-height:min(130px, 20vh)}
 /* Both boxes follow the cursor; scrollbars stay hidden and a soft fade marks text above. */
 .scrollbox{overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
 .scrollbox::-webkit-scrollbar{display:none}
 .scrollbox.faded{-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 30px);mask-image:linear-gradient(to bottom,transparent 0,#000 30px)}
-.tape .dot{width:9px;height:9px;border-radius:50%;background:var(--ink);margin:0 3px}
-.tape .dash{width:24px;height:9px;border-radius:5px;background:var(--ink);margin:0 3px}
-.tape .gap{width:12px;height:16px;border-bottom:2px solid var(--line);margin:0 1px}
-.tape .caret{width:2px;height:22px;background:var(--signal);margin-left:4px;animation:blink 1s steps(2) infinite}
+.tape .dot{width:5px;height:5px;border-radius:50%;background:var(--ink);margin:0 2px}
+.tape .dash{width:13px;height:5px;border-radius:3px;background:var(--ink);margin:0 2px}
+.tape .gap{width:7px;height:10px;border-bottom:2px solid var(--line);margin:0 1px}
+.tape .caret{width:2px;height:12px;background:var(--signal);margin:0 2px;animation:blink 1s steps(2) infinite}
+.tape{cursor:text}
+#w-text span[data-e]{cursor:pointer}
+.tbtn.arrow{padding:5px 10px;font-size:16px;line-height:1;font-weight:600;user-select:none;-webkit-user-select:none}
+.pad.swap .key[data-k="-"]{order:-1}
 @keyframes blink{50%{opacity:0}}
 .raw{margin-top:10px;font-family:var(--f-code);font-size:13px;color:var(--muted);white-space:pre-wrap;word-break:break-all}
 
@@ -119,7 +123,7 @@ details summary::-webkit-details-marker{display:none}
   background:var(--bg);color:var(--ink);border-radius:8px;padding:6px 8px;cursor:pointer;touch-action:manipulation}
 .chart b{font-weight:600}
 .chart span{font-family:var(--f-code);font-size:13px;color:var(--muted);letter-spacing:-.02em}
-.tape .lit{font-size:19px;font-weight:600;line-height:1;color:var(--signal);margin:0 3px}
+.tape .lit{font-size:12px;font-weight:600;line-height:1;color:var(--signal);margin:0 3px}
 /* The symbol layer swaps in where Dot and Dash sit, at the same height, so nothing above moves. */
 .syms{grid-column:1/-1;display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:1fr 1fr;gap:6px;
   height:min(118px,17vh);min-height:78px}
@@ -153,6 +157,8 @@ details summary::-webkit-details-marker{display:none}
       <div class="cardhead">
         <span class="label">Morse</span>
         <div class="tools">
+          <button class="tbtn arrow" id="cur-left" aria-label="Move cursor left">‹</button>
+          <button class="tbtn arrow" id="cur-right" aria-label="Move cursor right">›</button>
           <button class="tbtn" id="play">Play</button>
           <button class="tbtn" id="clear">Clear</button>
           <button class="tbtn primary" id="copy">Copy</button>
@@ -170,6 +176,12 @@ details summary::-webkit-details-marker{display:none}
     </section>
 
     <section class="card">
+      <div class="cardhead" style="margin:0 0 12px"><span class="label">Key order</span>
+        <div class="seg small" role="group" aria-label="Order of the Dot and Dash keys">
+          <button id="o-dot" aria-pressed="true">• –</button>
+          <button id="o-dash" aria-pressed="false">– •</button>
+        </div>
+      </div>
       <div class="cardhead" style="margin:0"><span class="label">Theme</span>
         <div class="seg small words" role="group" aria-label="Theme">
           <button id="t-auto" aria-pressed="true">Auto</button>
@@ -222,6 +234,7 @@ const load = (k,d) => { try { const v = localStorage.getItem(k); return v == nul
 const save = (k,v) => { try { localStorage.setItem(k,v); } catch(e){} };
 
 let raw = load("mp.raw", "");
+let cur = raw.length;
 const dotGlyph = "•";
 let mode = "write";
 
@@ -237,35 +250,37 @@ function normalize(s){
           .replace(/[  -​]/g," ").replace(/\r/g,"");
 }
 
-function parse(s, live){
+// Splits Morse into letters, symbols and word breaks, keeping each item's position (s..e) in the text.
+// In live mode, the letter the cursor touches is marked as pending (shown in amber).
+function parse(s, live, at){
   const n = normalize(s);
-  const words = n.split(/\s*\/\s*|[ \t]{2,}|\n+/).map(w => w.trim()).filter(Boolean);
-  const endsOpen = live && !/\s$/.test(n);
   const out = [];
-  words.forEach((w, wi) => {
-    if (wi) out.push({sp:true});
-    const toks = w.split(/\s+/).filter(Boolean);
-    toks.forEach((tok, ti) => {
-      let code = "";
-      const flush = atEnd => {
-        if (!code) return;
-        const ch = REV[code];
-        const pending = atEnd && endsOpen && wi === words.length - 1 && ti === toks.length - 1;
-        out.push({ch: ch || "?", code, pending, unk: !ch});
-        code = "";
-      };
-      for (const c of tok){
-        if (c === "." || c === "-") code += c;
-        else { flush(false); out.push({lit: c === LDOT ? "." : c}); }
-      }
-      flush(true);
-    });
-  });
+  let code = "", cs = 0, brk = false, i = 0;
+  const push = it => { if (brk && out.length) out.push({sp:true}); brk = false; out.push(it); };
+  const flush = end => {
+    if (!code) return;
+    const ch = REV[code];
+    push({ch: ch || "?", code, unk: !ch, s: cs, e: end});
+    code = "";
+  };
+  while (i < n.length){
+    const c = n[i];
+    if (c === "." || c === "-"){ if (!code) cs = i; code += c; i++; }
+    else if (/\s/.test(c) || c === "/"){
+      flush(i);
+      let j = i, hard = false;
+      while (j < n.length && (/\s/.test(n[j]) || n[j] === "/")){ if (n[j] === "/" || n[j] === "\n") hard = true; j++; }
+      if (hard || j - i >= 2) brk = true;
+      i = j;
+    } else { flush(i); push({lit: c === LDOT ? "." : c, s: i, e: i + 1}); i++; }
+  }
+  flush(n.length);
+  if (live) for (const it of out) if (it.code && it.s < at && at <= it.e) it.pending = true;
   return out;
 }
 
 function renderText(el, s, live){
-  const items = parse(s, live);
+  const items = parse(s, live, cur);
   el.textContent = "";
   if (!items.length){
     const h = document.createElement("span"); h.className = "hint";
@@ -273,14 +288,13 @@ function renderText(el, s, live){
     el.appendChild(h); return;
   }
   for (const it of items){
-    if (it.sp) el.appendChild(document.createTextNode(" "));
-    else if (it.lit) el.appendChild(document.createTextNode(it.lit));
-    else if (it.pending || it.unk){
-      const sp = document.createElement("span");
-      sp.className = it.pending ? "pending" : "unk";
-      sp.textContent = it.ch; sp.title = it.code;
-      el.appendChild(sp);
-    } else el.appendChild(document.createTextNode(it.ch));
+    if (it.sp){ el.appendChild(document.createTextNode(" ")); continue; }
+    const sp = document.createElement("span");
+    sp.textContent = it.lit || it.ch;
+    if (it.pending) sp.className = "pending"; else if (it.unk) sp.className = "unk";
+    if (it.code) sp.title = it.code;
+    if (live) sp.dataset.e = it.e;
+    el.appendChild(sp);
   }
 }
 
@@ -294,31 +308,65 @@ function fade(el){ el.classList.toggle("faded", el.scrollTop > 2); }
 function stick(el){ el.scrollTop = el.scrollHeight; fade(el); }
 document.querySelectorAll(".scrollbox").forEach(el => el.addEventListener("scroll", () => fade(el), {passive:true}));
 
+// Scroll a box just enough to show el, leaving room for the fade at the top.
+function keepVisible(box, el){
+  if (!el){ box.scrollTop = box.scrollHeight; fade(box); return; }
+  const b = box.getBoundingClientRect(), r = el.getBoundingClientRect();
+  if (r.bottom > b.bottom - 4) box.scrollTop += r.bottom - b.bottom + 8;
+  else if (r.top < b.top + 30 && box.scrollTop > 0) box.scrollTop -= b.top + 30 - r.top;
+  fade(box);
+}
+
 function renderWrite(){
-  renderText($("w-text"), raw, true);
+  cur = Math.max(0, Math.min(cur, raw.length));
+  const wt = $("w-text");
+  renderText(wt, raw, true);
   const tape = $("tape"); tape.textContent = "";
   const frag = document.createDocumentFragment();
-  for (const c of raw){
+  const caret = document.createElement("span"); caret.className = "caret";
+  [...raw].forEach((c, i) => {
+    if (i === cur) frag.appendChild(caret);
     const sp = document.createElement("span");
+    sp.dataset.i = i;
     if (c === ".") sp.className = "dot";
     else if (c === "-") sp.className = "dash";
     else if (/\s/.test(c)) sp.className = "gap";
     else { sp.className = "lit"; sp.textContent = c === LDOT ? "." : c; }
     frag.appendChild(sp);
-  }
-  const caret = document.createElement("span"); caret.className = "caret"; frag.appendChild(caret);
+  });
+  if (cur >= raw.length) frag.appendChild(caret);
   tape.appendChild(frag);
-  stick(tape); stick($("w-text"));
+  keepVisible(tape, cur >= raw.length ? null : caret);
+  const spans = [...wt.querySelectorAll("[data-e]")];
+  const target = cur >= raw.length ? null : spans.find(s => +s.dataset.e >= cur);
+  keepVisible(wt, target || null);
   save("mp.raw", raw);
 }
 
+// Editing happens at the cursor, so corrections can be made anywhere in the message.
+function ins(str){ raw = raw.slice(0, cur) + str + raw.slice(cur); cur += str.length; }
+function setCursor(i){ cur = Math.max(0, Math.min(i, raw.length)); resetClear(); renderWrite(); }
+
 function press(k){
   if (k === "syms"){ toggleSyms(); return; }
-  if (k === "." || k === "-") raw += k;
-  else if (k.startsWith("lit:")){ const ch = k.slice(4); raw += ch === "." ? LDOT : ch; }
-  else if (k === "letter"){ if (raw && !/\s$/.test(raw)) raw += " "; if (!symsEl.hidden) toggleSyms(false); }
-  else if (k === "word"){ if (raw.trim()) raw = raw.replace(/\s+$/,"") + "   "; if (!symsEl.hidden) toggleSyms(false); }
-  else if (k === "bs"){ raw = /\S {3}$/.test(raw) || /^ +$/.test(raw) ? raw.replace(/ +$/,"") : raw.slice(0,-1); }
+  if (k === "." || k === "-") ins(k);
+  else if (k.startsWith("lit:")){ const ch = k.slice(4); ins(ch === "." ? LDOT : ch); }
+  else if (k === "letter"){
+    if (cur > 0 && !/\s/.test(raw[cur - 1])){ if (raw[cur] === " ") cur++; else ins(" "); }
+    if (!symsEl.hidden) toggleSyms(false);
+  }
+  else if (k === "word"){
+    let a = cur, b = cur;
+    while (a > 0 && raw[a - 1] === " ") a--;
+    while (b < raw.length && raw[b] === " ") b++;
+    if (raw.slice(0, a).trim()){ raw = raw.slice(0, a) + "   " + raw.slice(b); cur = a + 3; }
+    if (!symsEl.hidden) toggleSyms(false);
+  }
+  else if (k === "bs" && cur > 0){
+    const before = raw.slice(0, cur);
+    const a = /\S {3}$/.test(before) || /^ +$/.test(before) ? before.replace(/ +$/, "").length : cur - 1;
+    raw = raw.slice(0, a) + raw.slice(cur); cur = a;
+  }
   resetClear();
   renderWrite();
   const tape = $("tape"), box = $("write-view").getBoundingClientRect(), r = tape.getBoundingClientRect();
@@ -360,7 +408,9 @@ $("pad").addEventListener("contextmenu", e => e.preventDefault());
 document.addEventListener("keydown", e => {
   if (mode !== "write" || e.target.tagName === "TEXTAREA" || e.metaKey || e.ctrlKey) return;
   const map = {".":".", "-":"-", " ":"letter", "Enter":"word", "/":"word", "Backspace":"bs"};
-  if (map[e.key]){ e.preventDefault(); press(map[e.key]); }
+  const moves = {ArrowLeft: -1, ArrowRight: 1, Home: -Infinity, End: Infinity};
+  if (e.key in moves){ e.preventDefault(); const m = moves[e.key]; setCursor(isFinite(m) ? cur + m : m < 0 ? 0 : raw.length); }
+  else if (map[e.key]){ e.preventDefault(); press(map[e.key]); }
   else if (SYMS.includes(e.key)){ e.preventDefault(); press("lit:" + e.key); }
 });
 
@@ -391,10 +441,47 @@ function resetClear(){ clearArmed = false; clearTimeout(clearT); const b = $("cl
 $("clear").addEventListener("click", () => {
   if (!raw) return;
   if (!clearArmed){ clearArmed = true; const b = $("clear"); b.textContent = "Tap to confirm"; b.classList.add("warn"); clearT = setTimeout(resetClear, 3000); return; }
-  raw = ""; resetClear(); renderWrite(); toast("Cleared");
+  raw = ""; cur = 0; resetClear(); renderWrite(); toast("Cleared");
 });
 
-// dot glyph setting
+// cursor: tap in the Morse to place it, tap a letter in the translation to jump after it, or use the arrows
+$("tape").addEventListener("click", e => {
+  const spans = [...$("tape").querySelectorAll("[data-i]")];
+  if (!spans.length) return;
+  const rows = spans.map(sp => { const r = sp.getBoundingClientRect(); return {i: +sp.dataset.i, r, dy: Math.abs(e.clientY - (r.top + r.bottom) / 2)}; });
+  const minDy = Math.min(...rows.map(x => x.dy));
+  let best = raw.length, bd = Infinity;
+  rows.filter(x => x.dy - minDy < 4).forEach(x => {
+    const dl = Math.abs(e.clientX - x.r.left), dr = Math.abs(e.clientX - x.r.right);
+    if (dl < bd){ bd = dl; best = x.i; }
+    if (dr < bd){ bd = dr; best = x.i + 1; }
+  });
+  setCursor(best);
+});
+$("w-text").addEventListener("click", e => {
+  const sp = e.target.closest("[data-e]"); if (sp) setCursor(+sp.dataset.e);
+});
+function repeatable(btn, fn){
+  let t = null, iv = null;
+  const stop = () => { clearTimeout(t); clearInterval(iv); t = iv = null; };
+  btn.addEventListener("pointerdown", e => { e.preventDefault(); fn(); stop(); t = setTimeout(() => { iv = setInterval(fn, 90); }, 400); });
+  ["pointerup","pointercancel","pointerleave"].forEach(ev => btn.addEventListener(ev, stop));
+  btn.addEventListener("click", e => { if (e.detail === 0) fn(); });
+  btn.addEventListener("contextmenu", e => e.preventDefault());
+}
+repeatable($("cur-left"), () => setCursor(cur - 1));
+repeatable($("cur-right"), () => setCursor(cur + 1));
+
+// key order: Dot left (default) or Dash left
+function setOrder(o){
+  const swap = o === "dash";
+  $("pad").classList.toggle("swap", swap);
+  $("o-dot").setAttribute("aria-pressed", !swap); $("o-dash").setAttribute("aria-pressed", swap);
+  save("mp.order", swap ? "dash" : "dot");
+}
+$("o-dot").addEventListener("click", () => setOrder("dot"));
+$("o-dash").addEventListener("click", () => setOrder("dash"));
+setOrder(load("mp.order", "dot"));
 
 // theme: Auto follows the phone, Light/Dark override it
 function syncThemeColor(){
@@ -419,7 +506,11 @@ const chart = $("chart");
 Object.keys(CODE).forEach(k => {
   const b = document.createElement("button"); b.type = "button";
   b.innerHTML = "<b></b><span></span>"; b.firstChild.textContent = k; b.lastChild.textContent = CODE[k].replace(/\./g,"•").replace(/-/g,"–");
-  b.addEventListener("click", () => { if (raw && !/\s$/.test(raw)) raw += " "; raw += CODE[k] + " "; resetClear(); renderWrite(); });
+  b.addEventListener("click", () => {
+    const s = (cur > 0 && !/\s/.test(raw[cur - 1]) ? " " : "") + CODE[k];
+    if (raw[cur] === " "){ ins(s); cur++; } else ins(s + " ");
+    resetClear(); renderWrite();
+  });
   chart.appendChild(b);
 });
 
