@@ -90,6 +90,10 @@ main{overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding-bottom:
 #w-text span[data-e]{cursor:pointer}
 .tbtn.arrow{padding:5px 10px;font-size:16px;line-height:1;font-weight:600;user-select:none;-webkit-user-select:none}
 .pad.swap .key[data-k="-"]{order:-1}
+.speed{display:flex;align-items:center;gap:12px}
+.speedlbl{font-size:14px;color:var(--muted)}
+.speed input{flex:1;min-width:0;accent-color:var(--signal);height:28px}
+.speed output{font-family:var(--f-code);font-size:13px;font-variant-numeric:tabular-nums;min-width:6ch;text-align:right}
 @keyframes blink{50%{opacity:0}}
 .raw{margin-top:10px;font-family:var(--f-code);font-size:13px;color:var(--muted);white-space:pre-wrap;word-break:break-all}
 
@@ -159,12 +163,26 @@ details summary::-webkit-details-marker{display:none}
         <div class="tools">
           <button class="tbtn arrow" id="cur-left" aria-label="Move cursor left">‹</button>
           <button class="tbtn arrow" id="cur-right" aria-label="Move cursor right">›</button>
-          <button class="tbtn" id="play">Play</button>
           <button class="tbtn" id="clear">Clear</button>
           <button class="tbtn primary" id="copy">Copy</button>
         </div>
       </div>
       <div class="tape scrollbox" id="tape" aria-label="Morse you have typed"></div>
+    </section>
+
+    <section class="card">
+      <div class="cardhead">
+        <span class="label">Sound</span>
+        <div class="tools">
+          <button class="tbtn" id="play">Play</button>
+          <button class="tbtn" id="share-audio">Send as audio</button>
+        </div>
+      </div>
+      <div class="speed">
+        <label for="wpm" class="speedlbl">Speed</label>
+        <input type="range" id="wpm" min="5" max="30" step="1" value="16">
+        <output id="wpm-out" for="wpm">16 WPM</output>
+      </div>
     </section>
 
     <section class="card">
@@ -219,6 +237,7 @@ details summary::-webkit-details-marker{display:none}
 </div>
 <div class="toast" id="toast" role="status"></div>
 
+<script async src="lame.min.js"></script>
 <script>
 (function(){
 const CODE = {A:".-",B:"-...",C:"-.-.",D:"-..",E:".",F:"..-.",G:"--.",H:"....",I:"..",J:".---",K:"-.-",L:".-..",M:"--",
@@ -514,27 +533,93 @@ Object.keys(CODE).forEach(k => {
   chart.appendChild(b);
 });
 
-// play as sound
+// sound: one generator feeds both Play and the audio file, so they sound the same.
+// Standard timing: dot = 1 unit, dash = 3, gap inside a letter = 1, letter gap = 3, word gap = 7.
+// One unit lasts 1.2 / WPM seconds. Symbols from the Symbols row are silent.
+const RATE = 44100, TONE = 640;
+let wpm = Math.max(5, Math.min(30, parseInt(load("mp.wpm", "16"), 10) || 16));
+function synth(s, speed){
+  const u = 1.2 / speed, ramp = 0.005, lead = 0.25, tail = 0.4;
+  const tones = []; let t = lead;
+  for (const c of s){
+    if (c === "." || c === "-"){ const d = c === "." ? u : 3 * u; tones.push([t, d]); t += d + u; }
+    else if (/\s/.test(c)) t += 2 * u;
+  }
+  const out = new Float32Array(Math.ceil((t + tail) * RATE));
+  const w = 2 * Math.PI * TONE / RATE, rn = ramp * RATE;
+  for (const [start, dur] of tones){
+    const a = Math.round(start * RATE), n = Math.round(dur * RATE);
+    for (let i = 0; i < n; i++){
+      const env = i < rn ? 0.5 - 0.5 * Math.cos(Math.PI * i / rn) : i > n - rn ? 0.5 - 0.5 * Math.cos(Math.PI * (n - i) / rn) : 1;
+      out[a + i] = 0.55 * env * Math.sin(w * i);
+    }
+  }
+  return out;
+}
+function encodeMp3(samples){
+  const enc = new lamejs.Mp3Encoder(1, RATE, 64);
+  const pcm = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
+  const parts = [];
+  for (let i = 0; i < pcm.length; i += 1152){
+    const buf = enc.encodeBuffer(pcm.subarray(i, i + 1152));
+    if (buf.length) parts.push(new Int8Array(buf));
+  }
+  const end = enc.flush(); if (end.length) parts.push(new Int8Array(end));
+  return new Blob(parts, {type: "audio/mpeg"});
+}
+
 let actx = null, playing = null;
 $("play").addEventListener("click", () => {
   if (playing){ playing.stop(); return; }
-  if (!raw.trim()){ toast("Nothing to play yet"); return; }
+  if (!/[.\-]/.test(raw)){ toast("Nothing to play yet"); return; }
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ toast("Sound isn't available here"); return; }
   if (actx.state === "suspended") actx.resume();
-  const u = 0.075; let t = actx.currentTime + 0.05;
-  const osc = actx.createOscillator(), g = actx.createGain();
-  osc.frequency.value = 640; g.gain.value = 0; osc.connect(g); g.connect(actx.destination);
-  for (const c of raw){
-    if (c === "." || c === "-"){ const d = c === "." ? u : 3*u;
-      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.25, t + 0.005);
-      g.gain.setValueAtTime(0.25, t + d - 0.005); g.gain.linearRampToValueAtTime(0, t + d); t += d + u;
-    } else t += 2*u;
-  }
-  osc.start(); osc.stop(t);
+  const data = synth(raw, wpm);
+  const buf = actx.createBuffer(1, data.length, RATE);
+  buf.getChannelData(0).set(data);
+  const src = actx.createBufferSource(); src.buffer = buf; src.connect(actx.destination);
+  src.start();
   $("play").textContent = "Stop";
-  playing = { stop(){ try { osc.stop(); } catch(e){} } };
-  osc.onended = () => { playing = null; $("play").textContent = "Play"; };
+  playing = { stop(){ try { src.stop(); } catch(e){} } };
+  src.onended = () => { playing = null; $("play").textContent = "Play"; };
 });
+
+// Send as audio: build the MP3 inside the tap, then open the share sheet (WhatsApp shows it as a playable clip).
+$("share-audio").addEventListener("click", () => {
+  if (!/[.\-]/.test(raw)){ toast("Nothing to send yet"); return; }
+  if (!window.lamejs){ toast("The audio maker hasn't loaded. Check the connection and reopen the app."); return; }
+  let blob;
+  try { blob = encodeMp3(synth(raw, wpm)); } catch(e){ toast("Couldn't make the audio file"); return; }
+  // Named by time and speed only, so the file name never gives the message away.
+  const d = new Date(), p2 = n => String(n).padStart(2, "0");
+  const name = "morse-" + d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate()) + "-" + p2(d.getHours()) + p2(d.getMinutes()) + "-" + wpm + "wpm.mp3";
+  const file = new File([blob], name, {type: "audio/mpeg"});
+  const framed = (() => { try { return window.self !== window.top; } catch(e){ return true; } })();
+  const saveFile = () => {
+    const url = URL.createObjectURL(blob), a = document.createElement("a");
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    toast("Saving " + name);
+  };
+  let canShare = false;
+  try { canShare = !!(navigator.share && navigator.canShare && navigator.canShare({files: [file]})); } catch(e){}
+  if (canShare){
+    navigator.share({files: [file]}).catch(err => {
+      if (err && err.name === "AbortError") return;
+      if (framed) toast("Sharing works in the installed app. Use Play to listen here.");
+      else saveFile();
+    });
+  } else if (framed) toast("Sharing works in the installed app. Use Play to listen here.");
+  else saveFile();
+});
+
+// speed
+function setWpm(v){
+  wpm = v; $("wpm").value = v; $("wpm-out").textContent = v + " WPM"; save("mp.wpm", String(v));
+}
+$("wpm").addEventListener("input", e => setWpm(parseInt(e.target.value, 10)));
+setWpm(wpm);
 
 // modes
 function setMode(m){
